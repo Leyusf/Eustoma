@@ -1,10 +1,9 @@
 import heapq
-import math
 import weakref
 
 import numpy as np
 
-from eustoma.config import Config
+from eustoma.config import Config, using_config
 
 
 def as_array(x):
@@ -39,9 +38,10 @@ class Variable:
         self.creator = func
         self.generation = func.generation + 1
 
-    def backward(self, retain_grad=False):
-        if not self.grad:
-            self.grad = np.ones_like(self.data)
+    def backward(self, retain_grad=False, create_graph=False):
+        if self.grad is None:
+            # self.grad = np.ones_like(self.data)
+            self.grad = Variable.ones_like(self.data)
 
         funcs = []
         seen_set = set()
@@ -60,16 +60,18 @@ class Variable:
             f = heapq.heappop(funcs)[-1]
             gys = [output().grad for output in f.outputs]
             # gys = [output.grad for output in f.outputs]
-            gxs = f.backward(*gys)
-            if not isinstance(gxs, tuple):
-                gxs = (gxs,)
-            for x, gx in zip(f.inputs, gxs):
-                if x.grad is not None:
-                    x.grad += gx  # 避免重复计算时重置导数
-                else:
-                    x.grad = gx
-                if x.creator:
-                    add_func(x)
+
+            with using_config('enable_backprop', create_graph):
+                gxs = f.backward(*gys)
+                if not isinstance(gxs, tuple):
+                    gxs = (gxs,)
+                for x, gx in zip(f.inputs, gxs):
+                    if x.grad is not None:
+                        x.grad += gx  # 避免重复计算时重置导数
+                    else:
+                        x.grad = gx
+                    if x.creator:
+                        add_func(x)
 
             if not retain_grad:
                 for y in f.outputs:
@@ -156,7 +158,7 @@ class Square(Function):
         return np.square(x)
 
     def backward(self, gy):
-        x = self.inputs[0].data
+        x, = self.inputs
         gx = 2 * x * gy
         return gx
 
@@ -166,7 +168,7 @@ class Exp(Function):
         return np.exp(x)
 
     def backward(self, gy):
-        x = self.inputs[0].data
+        x, = self.inputs
         gx = np.exp(x) * gy
         return gx
 
@@ -186,17 +188,16 @@ class Mul(Function):
         return y
 
     def backward(self, gy):
-        x0, x1 = self.inputs[0].data, self.inputs[1].data
+        x0, x1 = self.inputs
         return gy * x1, gy * x0
 
 
 class Neg(Function):
     def forward(self, x):
-        y = -x
-        return y
+        return -x
 
     def backward(self, gy):
-        return gy, -gy
+        return -gy
 
 
 class Sub(Function):
@@ -214,7 +215,7 @@ class Div(Function):
         return y
 
     def backward(self, gy):
-        x0, x1 = self.inputs[0].data, self.inputs[1].data
+        x0, x1 = self.inputs
         gx0 = gy / x1
         gx1 = gy * (-x0 / x1 ** 2)
         return gx0, gx1
@@ -230,9 +231,9 @@ class Log(Function):
         return np.log(x) / np.log(self.base)
 
     def backward(self, gy):
-        x = self.inputs[0].data
+        x, = self.inputs
         if self.base is not None:
-            gx = 1 / (x * np.log(self.base)) * gy
+            gx = 1 / (x * log(self.base)) * gy
         else:
             gx = 1 / x * gy
         return gx
@@ -240,16 +241,13 @@ class Log(Function):
 
 class Pow(Function):
     def __init__(self, c):
-        if isinstance(c, Variable):
-            self.c = c.data
-        else:
-            self.c = c
+        self.c = c
 
     def forward(self, x):
         return x ** self.c
 
     def backward(self, gy):
-        x = self.inputs[0].data
+        x, = self.inputs
         c = self.c
         gx = c * x ** (c - 1) * gy
         return gx
@@ -261,8 +259,8 @@ class Sin(Function):
         return y
 
     def backward(self, gy):
-        x = self.inputs[0].data
-        gx = gy * np.cos(x)
+        x, = self.inputs
+        gx = gy * cos(x)
         return gx
 
 
@@ -272,8 +270,19 @@ class Cos(Function):
         return y
 
     def backward(self, gy):
-        x = self.inputs[0].data
-        gx = gy * -1 * np.sin(x)
+        x, = self.inputs
+        gx = gy * -1 * sin(x)
+        return gx
+
+
+class Tanh(Function):
+    def forward(self, x):
+        y = np.tanh(x)
+        return y
+
+    def backward(self, gy):
+        y = self.outputs[0]()
+        gx = gy * (1 - y * y)
         return gx
 
 
@@ -290,6 +299,11 @@ def cos(x):
 def tan(x):
     x = as_variable(x)
     return sin(x) / cos(x)
+
+
+def tanh(x):
+    x = as_variable(x)
+    return Tanh()(x)
 
 
 def add(x0, x1):
@@ -356,6 +370,10 @@ def rpow(x, c):
     c = as_variable(c)
     x = Variable.repeat_like(x, c)
     return Pow(x)(c)
+
+
+def sqrt(x):
+    return pow(x, 0.5)
 
 
 def setup_variable():

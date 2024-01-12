@@ -21,4 +21,7 @@ from eustoma.core import log10
 from eustoma.config import using_config
 from eustoma.config import no_grad
 
+import eustoma.functions
+import eustoma.utils
+
 setup_variable()

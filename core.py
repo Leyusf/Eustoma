@@ -3,6 +3,7 @@ import weakref
 
 import numpy as np
 
+import eustoma
 from eustoma.config import Config, using_config
 
 
@@ -118,6 +119,24 @@ class Variable:
     @property
     def dtype(self):
         return self.data.dtype
+
+    def reshape(self, *shape):
+        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
+            shape = shape[0]
+        return eustoma.functions.reshape(self, shape)
+
+    def transpose(self, *axes):
+        if len(axes) == 0:
+            axes = None
+        elif len(axes) == 1:
+            if isinstance(axes[0], (tuple, list)) or axes[0] is None:
+                axes = axes[0]
+        return eustoma.functions.transpose(self, axes)
+
+    @property
+    def T(self):
+        return eustoma.functions.transpose(self)
+
 
 
 class Function:

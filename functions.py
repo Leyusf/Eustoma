@@ -1,6 +1,7 @@
 import numpy as np
-
-from eustoma.core import as_variable, Function
+import cython
+from eustoma import utils
+from eustoma.core import as_variable, Function, Variable
 
 
 def sphere(x, y):
@@ -55,6 +56,232 @@ class Transpose(Function):
         return gy.transpose(gy, inv_axes)
 
 
+class BroadcastTo(Function):
+    def __init__(self, shape):
+        self.shape = shape
+
+    def forward(self, x):
+        self.x_shape = x.shape
+        y = np.broadcast_to(x, self.shape)
+        return y
+
+    def backward(self, gy):
+        gx = sum_to(gy, self.x_shape)
+        return gx
+
+
+class Sum(Function):
+    def __init__(self, axis, keepdims):
+        self.axis = axis
+        self.keepdims = keepdims
+
+    def forward(self, x):
+        self.x_shape = x.shape
+        y = x.sum(axis=self.axis, keepdims=self.keepdims)
+        return y
+
+    def backward(self, gy):
+        gy = utils.reshape_sum_backward(gy, self.x_shape, self.axis, self.keepdims)
+        gx = broadcast_to(gy, self.x_shape)
+        return gx
+
+
+class SumTo(Function):
+    def __init__(self, shape):
+        self.shape = shape
+
+    def forward(self, x):
+        self.x_shape = x.shape
+        y = utils.sum_to(x, self.shape)
+        return y
+
+    def backward(self, gy):
+        gx = broadcast_to(gy, self.x_shape)
+        return gx
+
+
+class MatMul(Function):
+    def forward(self, x, W):
+        y = x.dot(W)
+        return y
+
+    def backward(self, gy):
+        x, W = self.inputs
+        gx = matmul(gy, W.T)
+        gW = matmul(x.T, gy)
+        return gx, gW
+
+
+class MeanSquaredError(Function):
+    def forward(self, x0, x1):
+        diff = x0 - x1
+        y = (diff ** 2).sum() / len(diff)
+        return y
+
+    def backward(self, gy):
+        x0, x1 = self.inputs
+        diff = x0 - x1
+        gx0 = gy * diff * (2. / len(diff))
+        gx1 = -gx0
+        return gx0, gx1
+
+
+class Square(Function):
+    def forward(self, x):
+        return np.square(x)
+
+    def backward(self, gy):
+        x, = self.inputs
+        gx = 2 * x * gy
+        return gx
+
+
+class Exp(Function):
+    def forward(self, x):
+        return np.exp(x)
+
+    def backward(self, gy):
+        y = self.outputs[0]()  # weakref
+        gx = y * gy
+        return gx
+
+
+class Log(Function):
+    def __init__(self, base=None):
+        self.base = base
+
+    def forward(self, x):
+        if self.base is None:
+            return np.log(x)
+        return np.log(x) / np.log(self.base)
+
+    def backward(self, gy):
+        x, = self.inputs
+        if self.base is not None:
+            gx = 1 / (x * log(self.base)) * gy
+        else:
+            gx = 1 / x * gy
+        return gx
+
+
+class Sin(Function):
+    def forward(self, x):
+        y = np.sin(x)
+        return y
+
+    def backward(self, gy):
+        x, = self.inputs
+        gx = gy * cos(x)
+        return gx
+
+
+class Cos(Function):
+    def forward(self, x):
+        y = np.cos(x)
+        return y
+
+    def backward(self, gy):
+        x, = self.inputs
+        gx = gy * -1 * sin(x)
+        return gx
+
+
+class Tanh(Function):
+    def forward(self, x):
+        y = np.tanh(x)
+        return y
+
+    def backward(self, gy):
+        y = self.outputs[0]()
+        gx = gy * (1 - y * y)
+        return gx
+
+
+class Linear(Function):
+    def forward(self, x, W, b):
+        y = x.dot(W)
+        if b is not None:
+            y += b
+        return y
+
+    def backward(self, gy):
+        x, W, b = self.inputs
+        gb = None if b.data is None else sum_to(gy, b.shape)
+        gx = matmul(gy, W.T)
+        gW = matmul(x.T, gy)
+        return gx, gW, gb
+
+
+def sin(x):
+    x = as_variable(x)
+    return Sin()(x)
+
+
+def cos(x):
+    x = as_variable(x)
+    return Cos()(x)
+
+
+def tan(x):
+    x = as_variable(x)
+    return sin(x) / cos(x)
+
+
+def tanh(x):
+    x = as_variable(x)
+    return Tanh()(x)
+
+
+def square(x):
+    f = Square()
+    return f(x)
+
+
+def sqrt(x):
+    return pow(x, 0.5)
+
+
+def exp(x):
+    return Exp()(x)
+
+
+def mean_squared_error(x0, x1):
+    return MeanSquaredError()(x0, x1)
+
+
+def matmul(x, W):
+    return MatMul()(x, W)
+
+
+def log(x):
+    x = as_variable(x)
+    return Log()(x)
+
+
+def log2(x):
+    return log(x) / log(Variable.repeat_like(2, x))
+
+
+def log10(x):
+    return log(x) / log(Variable.repeat_like(10, x))
+
+
+def sum_to(x, shape):
+    if x.shape == shape:
+        return as_variable(x)
+    return SumTo(shape)(x)
+
+
+def broadcast_to(x, shape):
+    if x.shape == shape:
+        return as_variable(x)
+    return BroadcastTo(shape)(x)
+
+
+def sum(x, axis=None, keepdims=False):
+    return Sum(axis, keepdims)(x)
+
+
 def reshape(x, shape):
     if x.shape == shape:
         return as_variable(x)
@@ -63,3 +290,14 @@ def reshape(x, shape):
 
 def transpose(x, axes=None):
     return Transpose(axes)(x)
+
+
+def sigmoid(x):
+    x = as_variable(x)
+    y = 1 / (1 + exp(-x))
+    return y
+
+
+def linear(x, W, b=None):
+    return Linear()(x, W, b)
+

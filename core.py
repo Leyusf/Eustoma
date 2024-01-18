@@ -137,11 +137,13 @@ class Variable:
     def T(self):
         return eustoma.functions.transpose(self)
 
+    def sum(self, axis=None, keepdims=False):
+        return eustoma.functions.sum(self, axis, keepdims)
 
 
 class Function:
     def __call__(self, *inputs):
-        inputs = [as_array(x) for x in inputs]
+        inputs = [as_variable(x) for x in inputs]
         xs = [x.data for x in inputs]
         ys = self.forward(*xs)  # 在forward中定义具体的计算步骤
         if not isinstance(ys, tuple):
@@ -172,33 +174,18 @@ class Function:
         return hash(str(id(self)))
 
 
-class Square(Function):
-    def forward(self, x):
-        return np.square(x)
-
-    def backward(self, gy):
-        x, = self.inputs
-        gx = 2 * x * gy
-        return gx
-
-
-class Exp(Function):
-    def forward(self, x):
-        return np.exp(x)
-
-    def backward(self, gy):
-        x, = self.inputs
-        gx = np.exp(x) * gy
-        return gx
-
-
 class Add(Function):
     def forward(self, x0, x1):
+        self.x0_shape, self.x1_shape = x0.shape, x1.shape
         y = x0 + x1
         return y
 
     def backward(self, gy):
-        return gy, gy
+        gx0, gx1 = gy, gy
+        if self.x0_shape != self.x1_shape:
+            gx0 = eustoma.functions.sum_to(gx0, self.x0_shape)
+            gx1 = eustoma.functions.sum_to(gx1, self.x1_shape)
+        return gx0, gx1
 
 
 class Mul(Function):
@@ -208,7 +195,12 @@ class Mul(Function):
 
     def backward(self, gy):
         x0, x1 = self.inputs
-        return gy * x1, gy * x0
+        gx0 = gy * x1
+        gx1 = gy * x0
+        if x0.shape != x1.shape:
+            gx0 = eustoma.functions.sum_to(gx0, x0.shape)
+            gx1 = eustoma.functions.sum_to(gx1, x1.shape)
+        return gx0, gx1
 
 
 class Neg(Function):
@@ -221,11 +213,16 @@ class Neg(Function):
 
 class Sub(Function):
     def forward(self, x0, x1):
+        self.x0_shape, self.x1_shape = x0.shape, x1.shape
         y = x0 - x1
         return y
 
     def backward(self, gy):
-        return gy, -gy
+        gx0, gx1 = gy, -gy
+        if self.x0_shape != self.x1_shape:
+            gx0 = eustoma.functions.sum_to(gx0, self.x0_shape)
+            gx1 = eustoma.functions.sum_to(gx1, self.x1_shape)
+        return gx0, gx1
 
 
 class Div(Function):
@@ -237,25 +234,10 @@ class Div(Function):
         x0, x1 = self.inputs
         gx0 = gy / x1
         gx1 = gy * (-x0 / x1 ** 2)
+        if x0.shape != x1.shape:
+            gx0 = eustoma.functions.sum_to(gx0, x0.shape)
+            gx1 = eustoma.functions.sum_to(gx1, x1.shape)
         return gx0, gx1
-
-
-class Log(Function):
-    def __init__(self, base=None):
-        self.base = base
-
-    def forward(self, x):
-        if self.base is None:
-            return np.log(x)
-        return np.log(x) / np.log(self.base)
-
-    def backward(self, gy):
-        x, = self.inputs
-        if self.base is not None:
-            gx = 1 / (x * log(self.base)) * gy
-        else:
-            gx = 1 / x * gy
-        return gx
 
 
 class Pow(Function):
@@ -272,59 +254,6 @@ class Pow(Function):
         return gx
 
 
-class Sin(Function):
-    def forward(self, x):
-        y = np.sin(x)
-        return y
-
-    def backward(self, gy):
-        x, = self.inputs
-        gx = gy * cos(x)
-        return gx
-
-
-class Cos(Function):
-    def forward(self, x):
-        y = np.cos(x)
-        return y
-
-    def backward(self, gy):
-        x, = self.inputs
-        gx = gy * -1 * sin(x)
-        return gx
-
-
-class Tanh(Function):
-    def forward(self, x):
-        y = np.tanh(x)
-        return y
-
-    def backward(self, gy):
-        y = self.outputs[0]()
-        gx = gy * (1 - y * y)
-        return gx
-
-
-def sin(x):
-    x = as_variable(x)
-    return Sin()(x)
-
-
-def cos(x):
-    x = as_variable(x)
-    return Cos()(x)
-
-
-def tan(x):
-    x = as_variable(x)
-    return sin(x) / cos(x)
-
-
-def tanh(x):
-    x = as_variable(x)
-    return Tanh()(x)
-
-
 def add(x0, x1):
     x1 = as_variable(x1)
     return Add()(x0, x1)
@@ -333,15 +262,6 @@ def add(x0, x1):
 def mul(x0, x1):
     x1 = as_variable(x1)
     return Mul()(x0, x1)
-
-
-def square(x):
-    f = Square()
-    return f(x)
-
-
-def exp(x):
-    return Exp()(x)
 
 
 def neg(x):
@@ -368,31 +288,21 @@ def rdiv(x0, x1):
     return Div()(x1, x0)
 
 
-def log(x):
-    x = as_variable(x)
-    return Log()(x)
-
-
-def log2(x):
-    return log(x) / log(Variable.repeat_like(2, x))
-
-
-def log10(x):
-    return log(x) / log(Variable.repeat_like(10, x))
-
-
 def pow(x, c):
+    if isinstance(c, Variable):
+        c = c.data
     return Pow(c)(x)
 
 
 def rpow(x, c):
-    c = as_variable(c)
-    x = Variable.repeat_like(x, c)
+    if isinstance(c, Variable):
+        c = c.data
+    # x = Variable.repeat_like(x, c)
     return Pow(x)(c)
 
 
-def sqrt(x):
-    return pow(x, 0.5)
+class Parameter(Variable):
+    pass
 
 
 def setup_variable():

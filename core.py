@@ -306,6 +306,7 @@ class Parameter(Variable):
 
 
 def setup_variable():
+    Variable.__getitem__ = eustoma.functions.get_item
     Variable.__add__ = add
     Variable.__radd__ = add
     Variable.__mul__ = mul

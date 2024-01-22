@@ -212,6 +212,43 @@ class Linear(Function):
         return gx, gW, gb
 
 
+class GetItem(Function):
+    def __init__(self, slices):
+        self.slices = slices
+
+    def forward(self, x):
+        y = x[self.slices]
+        return y
+
+    def backward(self, gy):
+        x, = self.inputs
+        f = GetItemGrad(self.slices, x.shape)
+        return f(gy)
+
+
+class GetItemGrad(Function):
+    def __init__(self, slices, in_shape):
+        self.slices = slices
+        self.in_shape = in_shape
+
+    def forward(self, gy):
+        gx = np.zeros(self.in_shape, dtype=gy.dtype)
+
+        if np is np:
+            np.add.at(gx, self.slices, gy)
+        else:
+            np.scatter_add(gx, self.slices, gy)
+        return gx
+
+    def backward(self, ggx):
+        return get_item(ggx, self.slices)
+
+
+def get_item(x, slices):
+    f = GetItem(slices)
+    return f(x)
+
+
 def sin(x):
     x = as_variable(x)
     return Sin()(x)

@@ -24,5 +24,7 @@ from eustoma.layers import Layer
 from eustoma.models import Model
 import eustoma.functions
 import eustoma.utils
+import eustoma.cuda
+import eustoma.datasets
 
 setup_variable()

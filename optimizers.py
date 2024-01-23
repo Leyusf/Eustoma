@@ -2,7 +2,7 @@ import numpy as np
 
 
 class Optimizer:
-    def __init__(self, target):
+    def __init__(self, target=None):
         self.target = target
         self.hooks = []
 

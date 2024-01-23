@@ -1,5 +1,4 @@
 import numpy as np
-import cython
 from eustoma import utils
 from eustoma.core import as_variable, Function, Variable
 
@@ -242,6 +241,49 @@ class GetItemGrad(Function):
 
     def backward(self, ggx):
         return get_item(ggx, self.slices)
+
+
+class SoftMax(Function):
+    def __init__(self, axis=1):
+        self.axis = axis
+        
+    def forward(self, x):
+        y = np.exp(x - np.max(x, axis=self.axis, keepdims=True))
+        sum_y = np.sum(y, axis=self.axis, keepdims=True)
+        return y / sum_y
+    
+    def backward(self, gy):
+        y = self.outputs[0]()
+        gx = y * gy
+        sumdx = gx.sum(axis=self.axis, keepdims=True)
+        gx -= y * sumdx
+        return gx
+
+class SoftmaxCrossEntropy(Function):
+    def forward(self, x, t):
+        N = x.shape[0]
+        log_z = utils.logsumexp(x, axis=1)
+        log_p = x - log_z
+        log_p = log_p[np.arange(N), t.ravel()]
+        y = -log_p.sum() / np.float32(N)
+        return y
+    
+    def backward(self, gy):
+        x, t = self.inputs
+        N, CLS_NUM = x.shape
+        gy *= 1/N
+        y = softmax(x)
+        t_one_hot = np.eye(CLS_NUM, dtype=t.dtype)[t.data]
+        y = (y - t_one_hot) * gy
+        return y
+
+
+def softmax_cross_entropy(x, t):
+    return SoftmaxCrossEntropy()(x, t)
+        
+
+def softmax(x, axis=1):
+    return SoftMax(axis=axis)(x)
 
 
 def get_item(x, slices):

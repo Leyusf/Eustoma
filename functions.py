@@ -246,12 +246,12 @@ class GetItemGrad(Function):
 class SoftMax(Function):
     def __init__(self, axis=1):
         self.axis = axis
-        
+
     def forward(self, x):
         y = np.exp(x - np.max(x, axis=self.axis, keepdims=True))
         sum_y = np.sum(y, axis=self.axis, keepdims=True)
         return y / sum_y
-    
+
     def backward(self, gy):
         y = self.outputs[0]()
         gx = y * gy
@@ -259,28 +259,45 @@ class SoftMax(Function):
         gx -= y * sumdx
         return gx
 
+
 class SoftmaxCrossEntropy(Function):
-    def forward(self, x, t):
-        N = x.shape[0]
-        log_z = utils.logsumexp(x, axis=1)
-        log_p = x - log_z
-        log_p = log_p[np.arange(N), t.ravel()]
+    def forward(self, pred, labels):
+        N = pred.shape[0]
+        log_z = utils.logsumexp(pred, axis=1)
+        log_p = pred - log_z
+        log_p = log_p[np.arange(N), labels.ravel()]
         y = -log_p.sum() / np.float32(N)
         return y
-    
+
     def backward(self, gy):
         x, t = self.inputs
         N, CLS_NUM = x.shape
-        gy *= 1/N
+        gy *= 1 / N
         y = softmax(x)
         t_one_hot = np.eye(CLS_NUM, dtype=t.dtype)[t.data]
         y = (y - t_one_hot) * gy
         return y
 
 
-def softmax_cross_entropy(x, t):
-    return SoftmaxCrossEntropy()(x, t)
-        
+class ReLU(Function):
+    def forward(self, x):
+        y = np.maximum(x, 0.0)
+        return y
+
+    def backward(self, gy):
+        x, = self.inputs
+        mask = x.data > 0
+        gx = gy * mask
+        return gx
+
+
+def relu(x):
+    return ReLU()(x)
+
+
+def softmax_cross_entropy(pred, labels):
+    return SoftmaxCrossEntropy()(pred, labels)
+
 
 def softmax(x, axis=1):
     return SoftMax(axis=axis)(x)
@@ -379,4 +396,3 @@ def sigmoid(x):
 
 def linear(x, W, b=None):
     return Linear()(x, W, b)
-

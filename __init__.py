@@ -22,9 +22,12 @@ from eustoma.config import using_config
 from eustoma.config import no_grad
 from eustoma.layers import Layer
 from eustoma.models import Model
+from eustoma.dataloaders import DataLoader
 import eustoma.functions
 import eustoma.utils
 import eustoma.cuda
 import eustoma.datasets
+import eustoma.evaluate
+
 
 setup_variable()

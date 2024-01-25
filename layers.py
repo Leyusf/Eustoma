@@ -1,6 +1,7 @@
 import numpy as np
 import weakref
 
+import eustoma.cuda
 from eustoma.core import Parameter
 import eustoma.functions as F
 
@@ -38,6 +39,13 @@ class Layer:
         self.outputs = [weakref.ref(y) for y in outputs]
         return outputs if len(outputs) > 1 else outputs[0]
 
+    def to(self, device):
+        if device == 'cpu' or device == 'cuda':
+            for param in self.params():
+                param.to(device)
+        else:
+            raise TypeError('{} if not supported'.format(device))
+
 
 class Linear(Layer):
     """
@@ -62,14 +70,15 @@ class Linear(Layer):
         else:
             self.b = Parameter(np.zeros(out_size, dtype=dtype), name='Bias')
 
-    def _init_W(self):
+    def _init_W(self, xp=np):
         I, O = self.in_size, self.out_size
-        W_data = np.random.randn(I, O).astype(self.dtype) * np.sqrt((1 / I))
+        W_data = xp.random.randn(I, O).astype(self.dtype) * np.sqrt((1 / I))
         self.W.data = W_data
 
     def forward(self, x):
         if self.W.data is None:
             self.in_size = x.shape[1]
-            self._init_W()
+            xp = eustoma.cuda.get_array_module(x)
+            self._init_W(xp)
         y = F.linear(x, self.W, self.b)
         return y

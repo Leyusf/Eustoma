@@ -1,9 +1,13 @@
 import numpy as np
-from eustoma import Variable
+
+import eustoma
 
 gpu_enable = True
+calculate_device = np
+
 try:
     import cupy as cp
+
     cupy = cp
 except ImportError:
     gpu_enable = False
@@ -11,7 +15,7 @@ except ImportError:
 
 # 返回参数x的对应模块，x为Variable或ndarray类型(numpy或cupy)
 def get_array_module(x):
-    if isinstance(x, Variable):
+    if isinstance(x, eustoma.Variable):
         x = x.data
 
     if not gpu_enable:
@@ -22,7 +26,7 @@ def get_array_module(x):
 
 # 将x转化为numpy
 def as_numpy(x):
-    if isinstance(x, Variable):
+    if isinstance(x, eustoma.Variable):
         x = x.data
 
     if np.isscalar(x):
@@ -34,7 +38,7 @@ def as_numpy(x):
 
 # 将x转换为cupy
 def as_cupy(x):
-    if isinstance(x, Variable):
+    if isinstance(x, eustoma.Variable):
         x = x.data
 
     if not gpu_enable:

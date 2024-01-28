@@ -1,3 +1,5 @@
+import os.path
+
 import numpy as np
 import weakref
 
@@ -9,6 +11,7 @@ import eustoma.functions as F
 class Layer:
     def __init__(self):
         self._params = set()
+        self.device = 'cpu'
 
     def __setattr__(self, name, value):
         if isinstance(value, (Parameter, Layer)):
@@ -43,8 +46,46 @@ class Layer:
         if device == 'cpu' or device == 'cuda':
             for param in self.params():
                 param.to(device)
+            self.device = device
         else:
             raise TypeError('{} if not supported'.format(device))
+
+    def _flatten_params(self, params_dict, parent_keys=""):
+        for name in self._params:
+            obj = self.__dict__[name]
+            key = parent_keys + "/" + name if parent_keys else name
+
+            if isinstance(obj, Layer):
+                obj._flatten_params(params_dict, key)
+            else:
+                params_dict[key] = obj
+
+    def save_weights(self, path):
+        old_device = self.device
+        self.to('cpu')
+        params_dict = {}
+        self._flatten_params(params_dict)
+        array_dict = {key: param.data for key, param in params_dict.items() if param is not None}
+
+        try:
+            np.savez_compressed(path, **array_dict)
+        except (Exception, KeyboardInterrupt) as e:
+            if os.path.exists(path):
+                os.remove(path)
+            raise
+        if old_device != self.device:
+            self.to(old_device)
+
+    def load_weights(self, path):
+        npz = np.load(path)
+        params_dict = {}
+        self._flatten_params(params_dict)
+        for key, param in params_dict.items():
+            param.data = npz[key]
+        if self.device != 'cpu':
+            self.to(self.device)
+
+
 
 
 class Linear(Layer):

@@ -20,6 +20,7 @@ from eustoma.functions import log2
 from eustoma.functions import log10
 from eustoma.config import using_config
 from eustoma.config import no_grad
+from eustoma.config import test_mode
 from eustoma.layers import Layer
 from eustoma.models import Model
 from eustoma.dataloaders import DataLoader

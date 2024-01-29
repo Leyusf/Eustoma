@@ -292,6 +292,19 @@ class SoftmaxCrossEntropy(Function):
         return y
 
 
+class Sigmoid(Function):
+    def forward(self, x):
+        xp = cuda.get_array_module(x)
+        # y = 1 / (1 + xp.exp(-x))
+        y = xp.tanh(x * 0.5) * 0.5 + 0.5  # Better implementation
+        return y
+
+    def backward(self, gy):
+        y = self.outputs[0]()
+        gx = gy * y * (1 - y)
+        return gx
+
+
 class ReLU(Function):
     def forward(self, x):
         xp = cuda.get_array_module(x.data)
@@ -307,6 +320,10 @@ class ReLU(Function):
 
 def relu(x):
     return ReLU()(x)
+
+
+def sigmoid(x):
+    return Sigmoid()(x)
 
 
 def softmax_cross_entropy(pred, labels):
@@ -401,12 +418,6 @@ def transpose(x, axes=None):
     return Transpose(axes)(x)
 
 
-def sigmoid(x):
-    x = as_variable(x)
-    y = 1 / (1 + exp(-x))
-    return y
-
-
 def linear(x, W, b=None):
     return Linear()(x, W, b)
 
@@ -421,5 +432,10 @@ def dropout(x, dropout_ratio=0.5):
         return y
     else:
         return x
+
+
+def flatten(x):
+    """Flattens the input. Does not affect the batch size."""
+    return reshape(x, (x.shape[0], -1))
 
 

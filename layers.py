@@ -3,9 +3,11 @@ import os.path
 import numpy as np
 import weakref
 
-import eustoma.cuda
+from eustoma import cuda
 from eustoma.core import Parameter
 import eustoma.functions as F
+import eustoma.functions_conv as Conv
+from eustoma.utils import pair
 
 
 class Layer:
@@ -86,6 +88,20 @@ class Layer:
             self.to(self.device)
 
 
+class Sigmoid(Layer):
+    def __init__(self):
+        super(Sigmoid, self).__init__()
+
+    def forward(self, x):
+        return F.sigmoid(x)
+
+
+class ReLU(Layer):
+    def __init__(self):
+        super(ReLU, self).__init__()
+
+    def forward(self, x):
+        return F.relu(x)
 
 
 class Linear(Layer):
@@ -119,7 +135,81 @@ class Linear(Layer):
     def forward(self, x):
         if self.W.data is None:
             self.in_size = x.shape[1]
-            xp = eustoma.cuda.get_array_module(x)
+            xp = cuda.get_array_module(x)
             self._init_W(xp)
         y = F.linear(x, self.W, self.b)
         return y
+
+
+class Conv2d(Layer):
+    def __init__(self, out_channels, kernel_size, stride=1, pad=0, nobias=False, dtype=np.float32, in_channels=None):
+        super(Conv2d, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.pad = pad
+        self.dtype = dtype
+
+        self.W = Parameter(None, name='Weight')
+        if in_channels is not None:
+            self._init_W()
+        if nobias:
+            self.b = None
+        else:
+            self.b = Parameter(np.zeros(out_channels, dtype=dtype), name='Bias')
+
+    def _init_W(self, xp=np):
+        IC, OC = self.in_channels, self.out_channels
+        KH, KW = pair(self.kernel_size)
+        scale = np.sqrt(1 / (IC * KH * KW))
+        W_data = xp.random.randn(OC, IC, KH, KW).astype(self.dtype) * scale
+        self.W.data = W_data
+
+    def forward(self, x):
+        if self.W.data is None:
+            self.in_channels = x.shape[1]
+            xp = cuda.get_array_module(x)
+            self._init_W(xp)
+        y = Conv.conv2d(x, self.W, self.b, self.stride, self.pad)
+        return y
+
+
+class Pooling(Layer):
+    def __init__(self, kernel_size, stride=1, pad=0):
+        super(Pooling, self).__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.pad = pad
+
+    def forward(self, x):
+        return Conv.pooling(x, self.kernel_size, self.stride, self.pad)
+
+
+class AveragePooling(Layer):
+    def __init__(self, kernel_size, stride=1, pad=0):
+        super(AveragePooling, self).__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.pad = pad
+
+    def forward(self, x):
+        return Conv.average_pooling(x, self.kernel_size, self.stride, self.pad)
+
+
+class Dropout(Layer):
+    def __init__(self, dropout=0.5):
+        super(Dropout, self).__init__()
+        self.dropout = dropout
+
+    def forward(self, x):
+        return F.dropout(x, self.dropout)
+
+
+class Flatten(Layer):
+    def __init__(self):
+        super(Flatten, self).__init__()
+
+    def forward(self, x):
+        return F.flatten(x)
+

@@ -153,6 +153,19 @@ class Variable:
         elif self.data is not None and device == 'cuda':
             self.data = eustoma.cuda.as_cupy(self.data)
 
+    def unchain(self):
+        self.creator = None
+
+    def unchain_backward(self):
+        if self.creator is not None:
+            funcs = [self.creator]
+            while funcs:
+                f = funcs.pop()
+                for x in f.inputs:
+                    if x.creator is not None:
+                        funcs.append(x.creator)
+                        x.unchain()
+
 
 class Function:
     def __call__(self, *inputs):

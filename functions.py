@@ -318,6 +318,44 @@ class ReLU(Function):
         return gx
 
 
+class Concat(Function):
+    def forward(self, *x):
+        xp = cuda.get_array_module(x[0])
+        y = xp.concatenate(x)
+        return y
+
+    def backward(self, gys):
+        gxs = []
+        i = 0
+        for x in self.inputs:
+            gxs.append(gys[i:i + len(x)])
+            i += len(x)
+        gxs = tuple(gxs)
+        return gxs
+
+
+class Stack(Function):
+    def forward(self, *x):
+        xp = cuda.get_array_module(x[0])
+        y = xp.stack(x)
+        return y
+
+    def backward(self, gys):
+        gxs = []
+        for gx in gys:
+            gxs.append(gx)
+        gxs = tuple(gxs)
+        return gxs
+
+
+def stack(x):
+    return Stack()(*x)
+
+
+def concat(x):
+    return Concat()(*x)
+
+
 def relu(x):
     return ReLU()(x)
 
@@ -415,6 +453,8 @@ def reshape(x, shape):
 
 
 def transpose(x, axes=None):
+    if not isinstance(axes, list):
+        axes = None
     return Transpose(axes)(x)
 
 
@@ -437,5 +477,3 @@ def dropout(x, dropout_ratio=0.5):
 def flatten(x):
     """Flattens the input. Does not affect the batch size."""
     return reshape(x, (x.shape[0], -1))
-
-

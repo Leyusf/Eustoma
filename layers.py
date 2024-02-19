@@ -213,3 +213,28 @@ class Flatten(Layer):
     def forward(self, x):
         return F.flatten(x)
 
+
+class _RNNLayer(Layer):
+    def __init__(self, hidden_size, in_size=None):
+        super(_RNNLayer, self).__init__()
+        self.hidden_size = hidden_size
+        self.in_size = in_size
+        self.H = None
+
+        # X->H
+        self.x2h = Linear(hidden_size, in_size=in_size)
+        # H -> H
+        self.h2h = Linear(hidden_size, in_size=in_size)
+
+    def reset_state(self):
+        self.H = None
+
+    ## 无优化的RNN
+    def forward(self, x):
+        if self.H is None:
+            self.H = []
+            new_H = F.tanh(self.x2h(x))
+        else:
+            new_H = F.tanh(self.x2h(x) + self.h2h(self.H[-1]))
+        self.H.append(new_H)
+        return new_H

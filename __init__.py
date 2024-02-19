@@ -29,6 +29,7 @@ import eustoma.utils
 import eustoma.cuda
 import eustoma.datasets
 import eustoma.evaluate
+import eustoma.optimizers
 
 
 setup_variable()

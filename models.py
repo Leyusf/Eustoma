@@ -1,3 +1,6 @@
+import numpy as np
+
+import eustoma
 from eustoma import utils
 import eustoma.functions as F
 import eustoma.layers as L
@@ -22,6 +25,9 @@ class Sequential(Model):
             x = layer(x)
         return x
 
+    def __getitem__(self, item):
+        return self.layers[item]
+
 
 class MLP(Model):
 
@@ -40,6 +46,74 @@ class MLP(Model):
         return self.layers[-1](x)
 
 
+class RNN(Model):
+    """
+    RNN模型接受的输入格式是(batch, seq length, data)
+    return: (batch_size, sequence_length, num_directions * hidden_size)
+    """
+
+    def __init__(self, hidden_size, num_layers=1, bidirectional=False, in_size=None):
+        super(RNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layer = num_layers
+        self.bidirectional = bidirectional
+        self.in_size = in_size
+        self.H = []
+        self._H = []
+        # 深度RNN
+        rnn_layers = []
+        for i in range(num_layers):
+            rnn_layers.append(L._RNNLayer(hidden_size, in_size=in_size))
+
+        self.net = Sequential(*rnn_layers)
+        # 双向RNN
+        if bidirectional:
+            rnn_layers = []
+            for i in range(num_layers):
+                rnn_layers.append(L._RNNLayer(hidden_size, in_size=in_size))
+            self.back_net = Sequential(*rnn_layers)
+
+    def reset_state(self):
+        self.H = []
+        self._H = []
+        for rnn in self.net:
+            rnn.reset_state()
+        if self.bidirectional:
+            for rnn in self.back_net:
+                rnn.reset_state()
+
+    def forward(self, x):
+        self.reset_state()
+        x = F.transpose(x, [1, 0, 2])  # seq_len, batch, input_size
+        for step_data in x:
+            # 计算每个时间步的隐状态
+            h = self.net(step_data)  # 每个隐状态的大小是 (batch_size, hidden_size)
+            self.H.append(h)
+        last_state = [self.H[-1]]
+        self.H = F.stack(self.H)  # (seq_length, batch_size, hidden_size)
+        self.H = F.transpose(self.H, [1, 0, 2])
+        if self.bidirectional:
+            for step_data in x[::-1]:
+                h = self.back_net(step_data)
+                self._H.append(h)
+            last_state.append(self._H[-1])
+            self._H = F.stack(self._H)
+            self._H = F.transpose(self._H, [1, 0, 2])
+        # 拼接成每个时间步上
+        if self.bidirectional:
+            self.H = F.transpose(self.H, [2, 1, 0])
+            self._H = F.transpose(self._H, [2, 1, 0])
+            self.H = F.concat([self.H, self._H])
+            self.H = F.transpose(self.H, [2, 1, 0])
+        last_sates = []
+        for state in last_state:
+            last_sates.append(F.transpose(state, [1, 0]))
+        last_sates = F.concat(last_sates)
+        last_sates = F.transpose(last_sates, [1, 0])
+        return self.H, last_sates
+
+
+### 固定的模型结构
 class VGGBlock:
     def __init__(self, num_conv, out_channels):
         """
@@ -64,10 +138,10 @@ class VGG16(Model):
         self.blocks = Sequential(*blocks)
         self.mlp = Sequential(
             L.Flatten(),
-            L.Linear(128*5),
+            L.Linear(128 * 5),
             L.ReLU(),
             L.Dropout(),
-            L.Linear(128*5),
+            L.Linear(128 * 5),
             L.ReLU(),
             L.Dropout(),
             L.Linear(10)
@@ -77,4 +151,3 @@ class VGG16(Model):
         x = self.blocks(x)
         x = self.mlp(x)
         return x
-

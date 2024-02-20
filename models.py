@@ -1,9 +1,6 @@
-import numpy as np
-
-import eustoma
-from eustoma import utils
 import eustoma.functions as F
 import eustoma.layers as L
+from eustoma import utils
 
 
 class Model(L.Layer):
@@ -46,14 +43,14 @@ class MLP(Model):
         return self.layers[-1](x)
 
 
-class RNN(Model):
+class GeneralRNNTemplate(Model):
     """
-    RNN模型接受的输入格式是(batch, seq length, data)
-    return: (batch_size, sequence_length, num_directions * hidden_size)
+    RNN模型模板接受的输入格式是(batch, seq length, data)
+    return: (all_states, last_state)
     """
 
-    def __init__(self, hidden_size, num_layers=1, bidirectional=False, in_size=None):
-        super(RNN, self).__init__()
+    def __init__(self, rnn_layer, hidden_size, num_layers, bidirectional, in_size):
+        super(GeneralRNNTemplate, self).__init__()
         self.hidden_size = hidden_size
         self.num_layer = num_layers
         self.bidirectional = bidirectional
@@ -63,14 +60,14 @@ class RNN(Model):
         # 深度RNN
         rnn_layers = []
         for i in range(num_layers):
-            rnn_layers.append(L._RNNLayer(hidden_size, in_size=in_size))
+            rnn_layers.append(rnn_layer(hidden_size, in_size=in_size))
 
         self.net = Sequential(*rnn_layers)
         # 双向RNN
         if bidirectional:
             rnn_layers = []
             for i in range(num_layers):
-                rnn_layers.append(L._RNNLayer(hidden_size, in_size=in_size))
+                rnn_layers.append(rnn_layer(hidden_size, in_size=in_size))
             self.back_net = Sequential(*rnn_layers)
 
     def reset_state(self):
@@ -111,6 +108,24 @@ class RNN(Model):
         last_sates = F.concat(last_sates)
         last_sates = F.transpose(last_sates, [1, 0])
         return self.H, last_sates
+
+
+class RNN(GeneralRNNTemplate):
+    """
+    RNN模型接受的输入格式是(batch, seq length, data)
+    return: (all_states, last_state)
+    """
+    def __init__(self, hidden_size, num_layers=1, bidirectional=False, in_size=None):
+        super(RNN, self).__init__(L._RNNLayer, hidden_size, num_layers, bidirectional, in_size)
+
+
+class GRU(GeneralRNNTemplate):
+    """
+    RNN模型接受的输入格式是(batch, seq length, data)
+    return: (all_states, last_state)
+    """
+    def __init__(self, hidden_size, num_layers=1, bidirectional=False, in_size=None):
+        super(GRU, self).__init__(L._GRULayer, hidden_size, num_layers, bidirectional, in_size)
 
 
 ### 固定的模型结构

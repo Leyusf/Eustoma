@@ -3,6 +3,7 @@ import os.path
 import numpy as np
 import weakref
 
+import eustoma
 from eustoma import cuda
 from eustoma.core import Parameter
 import eustoma.functions as F
@@ -229,7 +230,7 @@ class _RNNLayer(Layer):
     def reset_state(self):
         self.H = None
 
-    ## 无优化的RNN
+    # 无优化的RNN
     def forward(self, x):
         if self.H is None:
             self.H = []
@@ -238,3 +239,39 @@ class _RNNLayer(Layer):
             new_H = F.tanh(self.x2h(x) + self.h2h(self.H[-1]))
         self.H.append(new_H)
         return new_H
+
+
+class _GRULayer(Layer):
+    def __init__(self, hidden_size, in_size=None):
+        super(_GRULayer, self).__init__()
+        self.hidden_size = hidden_size
+        self.in_size = in_size
+        self.H = None
+
+        self.x2r = Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2r = Linear(hidden_size, in_size=in_size, nobias=True)
+        self.x2z = Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2z = Linear(hidden_size, in_size=in_size, nobias=True)
+        self.x2h = Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2h = Linear(hidden_size, in_size=in_size, nobias=True)
+
+        self.br = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
+        self.bz = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
+        self.bh = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
+
+    def reset_state(self):
+        self.H = None
+
+    def forward(self, x):
+        if self.H is None:
+            self.H = []
+            Z = F.sigmoid(self.x2z(x) + self.bz)
+            H_ = F.tanh(self.x2h(x) + self.bh)
+            H = (1 - Z) * H_
+        else:
+            R = F.sigmoid(self.x2r(x) + self.h2r(self.H[-1]) + self.br)
+            Z = F.sigmoid(self.x2z(x) + self.h2z(self.H[-1]) + self.bz)
+            H_ = F.tanh(self.x2h(x) + self.h2h(F.matmul(self.H[-1], R)) + self.bh)
+            H = Z * self.H[-1] + (1 - Z) * H_
+        self.H.append(H)
+        return H

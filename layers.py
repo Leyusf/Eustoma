@@ -271,7 +271,7 @@ class _GRULayer(Layer):
         else:
             R = F.sigmoid(self.x2r(x) + self.h2r(self.H[-1]) + self.br)
             Z = F.sigmoid(self.x2z(x) + self.h2z(self.H[-1]) + self.bz)
-            H_ = F.tanh(self.x2h(x) + self.h2h(F.matmul(self.H[-1], R)) + self.bh)
+            H_ = F.tanh(self.x2h(x) + self.h2h(self.H[-1] * R) + self.bh)
             H = Z * self.H[-1] + (1 - Z) * H_
         self.H.append(H)
         return H

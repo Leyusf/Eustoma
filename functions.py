@@ -1,3 +1,4 @@
+import cupyx
 import numpy as np
 from eustoma import utils, cuda
 from eustoma.config import Config
@@ -245,7 +246,9 @@ class GetItemGrad(Function):
         if xp is np:
             np.add.at(gx, self.slices, gy)
         else:
-            xp.scatter_add(gx, self.slices, gy)
+            cupyx.scatter_add(gx, self.slices, gy)
+            # 新版本cupy没有scatter_add
+            # xp.scatter_add(gx, self.slices, gy)
         return gx
 
     def backward(self, ggx):

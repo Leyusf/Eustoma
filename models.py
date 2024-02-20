@@ -25,6 +25,9 @@ class Sequential(Model):
     def __getitem__(self, item):
         return self.layers[item]
 
+    def __len__(self):
+        return len(self.layers)
+
 
 class MLP(Model):
 
@@ -86,28 +89,27 @@ class GeneralRNNTemplate(Model):
             # 计算每个时间步的隐状态
             h = self.net(step_data)  # 每个隐状态的大小是 (batch_size, hidden_size)
             self.H.append(h)
-        last_state = [self.H[-1]]
-        self.H = F.stack(self.H)  # (seq_length, batch_size, hidden_size)
-        self.H = F.transpose(self.H, [1, 0, 2])
+        last_H = [self.H[-1]]
+        states = F.stack(self.H)  # (seq_length, batch_size, hidden_size)
+        states = F.transpose(states, [1, 0, 2])  # b s h
         if self.bidirectional:
             for step_data in x[::-1]:
                 h = self.back_net(step_data)
                 self._H.append(h)
-            last_state.append(self._H[-1])
-            self._H = F.stack(self._H)
-            self._H = F.transpose(self._H, [1, 0, 2])
-        # 拼接成每个时间步上
-        if self.bidirectional:
-            self.H = F.transpose(self.H, [2, 1, 0])
-            self._H = F.transpose(self._H, [2, 1, 0])
-            self.H = F.concat([self.H, self._H])
-            self.H = F.transpose(self.H, [2, 1, 0])
-        last_sates = []
-        for state in last_state:
-            last_sates.append(F.transpose(state, [1, 0]))
-        last_sates = F.concat(last_sates)
-        last_sates = F.transpose(last_sates, [1, 0])
-        return self.H, last_sates
+            last_H.append(self._H[-1])
+            _states = F.stack(self._H)  # s b h
+            # 拼接成每个时间步上
+            states = F.transpose(states, [2, 1, 0])  # h s b
+            _states = F.transpose(_states, [2, 0, 1])  # h s b
+            states = F.concat([states, _states])  # h s b
+            states = F.transpose(states, [2, 1, 0])  # b s h
+
+        last_state = []
+        for state in last_H:
+            last_state.append(F.transpose(state, [1, 0]))  # h b
+        last_state = F.concat(last_state)  # h b
+        last_state = F.transpose(last_state, [1, 0])  # b h
+        return states, last_state  # b s h, b h
 
 
 class RNN(GeneralRNNTemplate):
@@ -115,6 +117,7 @@ class RNN(GeneralRNNTemplate):
     RNN模型接受的输入格式是(batch, seq length, data)
     return: (all_states, last_state)
     """
+
     def __init__(self, hidden_size, num_layers=1, bidirectional=False, in_size=None):
         super(RNN, self).__init__(L._RNNLayer, hidden_size, num_layers, bidirectional, in_size)
 
@@ -124,6 +127,7 @@ class GRU(GeneralRNNTemplate):
     RNN模型接受的输入格式是(batch, seq length, data)
     return: (all_states, last_state)
     """
+
     def __init__(self, hidden_size, num_layers=1, bidirectional=False, in_size=None):
         super(GRU, self).__init__(L._GRULayer, hidden_size, num_layers, bidirectional, in_size)
 

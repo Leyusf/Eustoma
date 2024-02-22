@@ -343,3 +343,5 @@ def setup_variable():
     Variable.__rtruediv__ = rdiv
     Variable.__pow__ = pow
     Variable.__rpow__ = rpow
+    Variable.__matmul__ = eustoma.functions.matmul
+    Variable.__rmatmul__ = eustoma.functions.matmul

@@ -1,14 +1,11 @@
 import os.path
-
-import numpy as np
 import weakref
 
+import numpy as np
+
 import eustoma
-from eustoma import cuda
-from eustoma.core import Parameter
 import eustoma.functions as F
-import eustoma.functions_conv as Conv
-from eustoma.utils import pair
+from eustoma.core import Parameter
 
 
 class Layer:
@@ -89,143 +86,83 @@ class Layer:
             self.to(self.device)
 
 
-class Sigmoid(Layer):
-    def __init__(self):
-        super(Sigmoid, self).__init__()
-
-    def forward(self, x):
-        return F.sigmoid(x)
-
-
-class ReLU(Layer):
-    def __init__(self):
-        super(ReLU, self).__init__()
-
-    def forward(self, x):
-        return F.relu(x)
-
-
-class Linear(Layer):
+class GeneralRNNTemplate(Layer):
     """
-    out_size: 输出的尺度
-    nobias: 有无偏置量
-    dtype: 数据类型
-    in_size: 输入尺度（默认不指定，则在forward过程中自动生成合适大小的parameter）
+    RNN模型模板接受的输入格式是(batch, seq length, data)
+    return: (all_states, last_state)
     """
 
-    def __init__(self, out_size, nobias=False, dtype=np.float32, in_size=None):
-        super().__init__()
+    def __init__(self, rnn_layer, hidden_size, num_layers, bidirectional, in_size):
+        super(GeneralRNNTemplate, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layer = num_layers
+        self.bidirectional = bidirectional
         self.in_size = in_size
-        self.out_size = out_size
-        self.dtype = dtype
-        self.W = Parameter(None, name="Weight")
+        self.H = []
+        self._H = []
+        # 深度RNN
+        rnn_layers = []
+        for i in range(num_layers):
+            rnn_layers.append(rnn_layer(hidden_size, in_size=in_size))
 
-        if self.in_size is not None:
-            self._init_W()
+        self.net = eustoma.nn.Sequential(*rnn_layers)
+        # 双向RNN
+        if bidirectional:
+            rnn_layers = []
+            for i in range(num_layers):
+                rnn_layers.append(rnn_layer(hidden_size, in_size=in_size))
+            self.back_net = eustoma.nn.Sequential(*rnn_layers)
 
-        if nobias:
-            self.b = None
-        else:
-            self.b = Parameter(np.zeros(out_size, dtype=dtype), name='Bias')
-
-    def _init_W(self, xp=np):
-        I, O = self.in_size, self.out_size
-        W_data = xp.random.randn(I, O).astype(self.dtype) * np.sqrt((1 / I))
-        self.W.data = W_data
-
-    def forward(self, x):
-        if self.W.data is None:
-            self.in_size = x.shape[1]
-            xp = cuda.get_array_module(x)
-            self._init_W(xp)
-        y = F.linear(x, self.W, self.b)
-        return y
-
-
-class Conv2d(Layer):
-    def __init__(self, out_channels, kernel_size, stride=1, pad=0, nobias=False, dtype=np.float32, in_channels=None):
-        super(Conv2d, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.pad = pad
-        self.dtype = dtype
-
-        self.W = Parameter(None, name='Weight')
-        if in_channels is not None:
-            self._init_W()
-        if nobias:
-            self.b = None
-        else:
-            self.b = Parameter(np.zeros(out_channels, dtype=dtype), name='Bias')
-
-    def _init_W(self, xp=np):
-        IC, OC = self.in_channels, self.out_channels
-        KH, KW = pair(self.kernel_size)
-        scale = np.sqrt(1 / (IC * KH * KW))
-        W_data = xp.random.randn(OC, IC, KH, KW).astype(self.dtype) * scale
-        self.W.data = W_data
+    def reset_state(self):
+        self.H = []
+        self._H = []
+        for rnn in self.net:
+            rnn.reset_state()
+        if self.bidirectional:
+            for rnn in self.back_net:
+                rnn.reset_state()
 
     def forward(self, x):
-        if self.W.data is None:
-            self.in_channels = x.shape[1]
-            xp = cuda.get_array_module(x)
-            self._init_W(xp)
-        y = Conv.conv2d(x, self.W, self.b, self.stride, self.pad)
-        return y
+        self.reset_state()
+        x = F.transpose(x, [1, 0, 2])  # seq_len, batch, input_size
+        for step_data in x:
+            # 计算每个时间步的隐状态
+            h = self.net(step_data)  # 每个隐状态的大小是 (batch_size, hidden_size)
+            self.H.append(h)
+        last_H = [self.H[-1]]
+        states = F.stack(self.H)  # (seq_length, batch_size, hidden_size)
+        states = F.transpose(states, [1, 0, 2])  # b s h
+        if self.bidirectional:
+            for step_data in x[::-1]:
+                h = self.back_net(step_data)
+                self._H.append(h)
+            last_H.append(self._H[-1])
+            _states = F.stack(self._H)  # s b h
+            # 拼接成每个时间步上
+            states = F.transpose(states, [2, 1, 0])  # h s b
+            _states = F.transpose(_states, [2, 0, 1])  # h s b
+            states = F.concat([states, _states])  # h s b
+            states = F.transpose(states, [2, 1, 0])  # b s h
+
+        last_state = []
+        for state in last_H:
+            last_state.append(F.transpose(state, [1, 0]))  # h b
+        last_state = F.concat(last_state)  # h b
+        last_state = F.transpose(last_state, [1, 0])  # b h
+        return states, last_state  # b s h, b h
 
 
-class Pooling(Layer):
-    def __init__(self, kernel_size, stride=1, pad=0):
-        super(Pooling, self).__init__()
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.pad = pad
-
-    def forward(self, x):
-        return Conv.pooling(x, self.kernel_size, self.stride, self.pad)
-
-
-class AveragePooling(Layer):
-    def __init__(self, kernel_size, stride=1, pad=0):
-        super(AveragePooling, self).__init__()
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.pad = pad
-
-    def forward(self, x):
-        return Conv.average_pooling(x, self.kernel_size, self.stride, self.pad)
-
-
-class Dropout(Layer):
-    def __init__(self, dropout=0.5):
-        super(Dropout, self).__init__()
-        self.dropout = dropout
-
-    def forward(self, x):
-        return F.dropout(x, self.dropout)
-
-
-class Flatten(Layer):
-    def __init__(self):
-        super(Flatten, self).__init__()
-
-    def forward(self, x):
-        return F.flatten(x)
-
-
-class _RNNLayer(Layer):
+class RNNBlock(Layer):
     def __init__(self, hidden_size, in_size=None):
-        super(_RNNLayer, self).__init__()
+        super(RNNBlock, self).__init__()
         self.hidden_size = hidden_size
         self.in_size = in_size
         self.H = None
 
         # X->H
-        self.x2h = Linear(hidden_size, in_size=in_size)
+        self.x2h = eustoma.nn.Linear(hidden_size, in_size=in_size)
         # H -> H
-        self.h2h = Linear(hidden_size, in_size=in_size)
+        self.h2h = eustoma.nn.Linear(hidden_size, in_size=in_size)
 
     def reset_state(self):
         self.H = None
@@ -241,19 +178,19 @@ class _RNNLayer(Layer):
         return new_H
 
 
-class _GRULayer(Layer):
+class GRUBlock(Layer):
     def __init__(self, hidden_size, in_size=None):
-        super(_GRULayer, self).__init__()
+        super(GRUBlock, self).__init__()
         self.hidden_size = hidden_size
         self.in_size = in_size
         self.H = None
 
-        self.x2r = Linear(hidden_size, in_size=in_size, nobias=True)
-        self.h2r = Linear(hidden_size, in_size=in_size, nobias=True)
-        self.x2z = Linear(hidden_size, in_size=in_size, nobias=True)
-        self.h2z = Linear(hidden_size, in_size=in_size, nobias=True)
-        self.x2h = Linear(hidden_size, in_size=in_size, nobias=True)
-        self.h2h = Linear(hidden_size, in_size=in_size, nobias=True)
+        self.x2r = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2r = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.x2z = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2z = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.x2h = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2h = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
 
         self.br = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
         self.bz = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
@@ -269,9 +206,55 @@ class _GRULayer(Layer):
             H_ = F.tanh(self.x2h(x) + self.bh)
             H = (1 - Z) * H_
         else:
-            R = F.sigmoid(self.x2r(x) + self.h2r(self.H[-1]) + self.br)
-            Z = F.sigmoid(self.x2z(x) + self.h2z(self.H[-1]) + self.bz)
-            H_ = F.tanh(self.x2h(x) + self.h2h(self.H[-1] * R) + self.bh)
+            H = self.H[-1]
+            R = F.sigmoid(self.x2r(x) + self.h2r(H) + self.br)
+            Z = F.sigmoid(self.x2z(x) + self.h2z(H) + self.bz)
+            H_ = F.tanh(self.x2h(x) + self.h2h(H * R) + self.bh)
             H = Z * self.H[-1] + (1 - Z) * H_
         self.H.append(H)
+        return H
+
+
+class LSTMBlock(Layer):
+    def __init__(self, hidden_size, in_size=None):
+        super(LSTMBlock, self).__init__()
+        self.hidden_size = hidden_size
+        self.in_size = in_size
+        self.H = None
+        self.C = 0
+
+        self.x2i = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2i = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.x2f = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2f = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.x2o = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.h2o = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+        self.x2c = eustoma.nn.Linear(hidden_size, in_size=in_size, nobias=True)
+
+        self.bi = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
+        self.bf = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
+        self.bo = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
+        self.bc = Parameter(np.zeros(hidden_size, dtype=np.float32), name='Bias')
+
+    def reset_state(self):
+        self.H = None
+        self.C = 0
+
+    # 无优化的RNN
+    def forward(self, x):
+        if self.H is None:
+            self.H = []
+            IG = F.sigmoid(self.x2i(x) + self.bi)
+            FG = F.sigmoid(self.x2f(x) + self.bf)
+            OG = F.sigmoid(self.x2o(x) + self.bo)
+        else:
+            H = self.H[-1]
+            IG = F.sigmoid(self.x2i(x) + self.h2i(H) + self.bi)
+            FG = F.sigmoid(self.x2f(x) + self.h2f(H) + self.bf)
+            OG = F.sigmoid(self.x2o(x) + self.h2o(H) + self.bo)
+        hat_C = F.tanh(self.x2c(x) + self.bc)
+        self.C = FG * self.C + IG * hat_C
+        H = OG * F.tanh(self.C)
+        self.H.append(H)
+
         return H

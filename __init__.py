@@ -22,7 +22,7 @@ from eustoma.config import using_config
 from eustoma.config import no_grad
 from eustoma.config import test_mode
 from eustoma.layers import Layer
-from eustoma.models import Model
+from eustoma.nn import Model
 from eustoma.dataloaders import DataLoader
 import eustoma.functions
 import eustoma.utils
